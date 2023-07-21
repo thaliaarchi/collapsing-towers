@@ -1,0 +1,13 @@
+[package]
+name = "collapsing-towers"
+version = "0.1.0"
+authors = ["Thalia Archibald <thalia@archibald.dev>"]
+edition = "2021"
+description = "An implementation of Collapsing Towers of Interpreters"
+repository = "https://github.com/thaliaarchi/collapsing-towers"
+license = "MPL-2.0"
+keywords = ["partial-evaluation"]
+categories = ["compilers"]
+
+[dependencies]
+im-rc = "15.1"
