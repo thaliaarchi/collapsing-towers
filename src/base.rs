@@ -486,4 +486,123 @@ mod tests {
             ),
         );
     }
+
+    #[test]
+    fn tree_sum() {
+        let tree_sum = Box::new(Exp::App(
+            Box::new(Exp::Lam(/*0 1*/ Box::new(Exp::App(
+                Box::new(Exp::Lam(/*2 3*/ Box::new(Exp::App(
+                    Box::new(Exp::Var(3)),
+                    Box::new(Exp::Var(3)),
+                )))),
+                Box::new(Exp::Lam(/*2 3*/ Box::new(Exp::Lam(
+                    /*4 5*/
+                    Box::new(Exp::Lam(/*6 7*/ Box::new(Exp::App(
+                        Box::new(Exp::App(
+                            Box::new(Exp::Var(1)),
+                            Box::new(Exp::App(
+                                Box::new(Exp::Var(5)),
+                                Box::new(Exp::App(
+                                    Box::new(Exp::App(
+                                        Box::new(Exp::Var(3)),
+                                        Box::new(Exp::Var(3)),
+                                    )),
+                                    Box::new(Exp::Var(5)),
+                                )),
+                            )),
+                        )),
+                        Box::new(Exp::Var(7)),
+                    )))),
+                )))),
+            )))),
+            Box::new(Exp::Lam(
+                /*0 1*/
+                Box::new(Exp::Lam(/*2 3*/ Box::new(Exp::If(
+                    Box::new(Exp::IsCons(Box::new(Exp::Var(3)))),
+                    Box::new(Exp::Plus(
+                        Box::new(Exp::App(
+                            Box::new(Exp::Var(1)),
+                            Box::new(Exp::Fst(Box::new(Exp::Var(3)))),
+                        )),
+                        Box::new(Exp::App(
+                            Box::new(Exp::Var(1)),
+                            Box::new(Exp::Snd(Box::new(Exp::Var(3)))),
+                        )),
+                    )),
+                    Box::new(Exp::Var(3)),
+                )))),
+            )),
+        ));
+
+        // Testing normal execution
+        let mut vm = Vm::new();
+        let v = vm.evalms(
+            &Vector::new(),
+            Box::new(Exp::App(
+                Box::new(Exp::App(
+                    tree_sum.clone(),
+                    Box::new(Exp::Lam(Box::new(Exp::Var(1)))),
+                )),
+                Box::new(Exp::Cons(
+                    Box::new(Exp::Cons(Box::new(Exp::Lit(1)), Box::new(Exp::Lit(2)))),
+                    Box::new(Exp::Lit(3)),
+                )),
+            )),
+        );
+        assert_eq!(Val::Cst(6), v);
+
+        let tree_sum_lifted = Box::new(Exp::Let(
+            /*0*/
+            Box::new(Exp::Lam(/*0 1*/ Box::new(Exp::Let(
+                /*2*/ Box::new(Exp::IsCons(Box::new(Exp::Var(1)))),
+                Box::new(Exp::Let(
+                    /*3*/
+                    Box::new(Exp::If(
+                        Box::new(Exp::Var(2)),
+                        Box::new(Exp::Let(
+                            /*3*/ Box::new(Exp::Fst(Box::new(Exp::Var(1)))),
+                            Box::new(Exp::Let(
+                                /*4*/
+                                Box::new(Exp::App(Box::new(Exp::Var(0)), Box::new(Exp::Var(3)))),
+                                Box::new(Exp::Let(
+                                    /*5*/ Box::new(Exp::Snd(Box::new(Exp::Var(1)))),
+                                    Box::new(Exp::Let(
+                                        /*6*/
+                                        Box::new(Exp::App(
+                                            Box::new(Exp::Var(0)),
+                                            Box::new(Exp::Var(5)),
+                                        )),
+                                        Box::new(Exp::Let(
+                                            /*7*/
+                                            Box::new(Exp::Plus(
+                                                Box::new(Exp::Var(4)),
+                                                Box::new(Exp::Var(6)),
+                                            )),
+                                            Box::new(Exp::Var(7)),
+                                        )),
+                                    )),
+                                )),
+                            )),
+                        )),
+                        Box::new(Exp::Var(1)),
+                    )),
+                    Box::new(Exp::Var(3)),
+                )),
+            )))),
+            Box::new(Exp::Var(0)),
+        ));
+
+        // Testing lift
+        let mut vm = Vm::new();
+        let e = vm.reifyc(|vm| {
+            vm.evalms(
+                &Vector::new(),
+                Box::new(Exp::Lift(Box::new(Exp::App(
+                    tree_sum.clone(),
+                    Box::new(Exp::Lam(Box::new(Exp::Lift(Box::new(Exp::Var(1)))))),
+                )))),
+            )
+        });
+        assert_eq!(tree_sum_lifted, e);
+    }
 }
