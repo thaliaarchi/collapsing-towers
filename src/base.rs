@@ -76,7 +76,7 @@ impl Vm {
         mem::swap(&mut block, &mut self.block);
         let fun = self.fun.clone();
         let mut l = f(self);
-        for e in self.block.drain(..) {
+        for e in self.block.drain(..).rev() {
             l = Box::new(Exp::Let(Box::new(e), l));
         }
         self.fresh = fresh;
@@ -195,7 +195,7 @@ impl Vm {
             let res = f(vm);
             if !vm.block.is_empty() {
                 let mut l = res.unwrap_code();
-                for e in vm.block.drain(..) {
+                for e in vm.block.drain(..).rev() {
                     l = Box::new(Exp::Let(Box::new(e), l));
                 }
                 Val::Code(l)
