@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::{self, Display, Formatter};
 use std::mem;
 use std::rc::Rc;
 
@@ -6,35 +7,45 @@ use im_rc::Vector;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Exp {
-    Lit(i64),
+    Num(i64),
     Sym(String),
     Var(usize),
     App(Rc<Exp>, Rc<Exp>),
     Lam(Rc<Exp>),
     Let(Rc<Exp>, Rc<Exp>),
     If(Rc<Exp>, Rc<Exp>, Rc<Exp>),
-    Plus(Rc<Exp>, Rc<Exp>),
-    Minus(Rc<Exp>, Rc<Exp>),
-    Times(Rc<Exp>, Rc<Exp>),
-    Equ(Rc<Exp>, Rc<Exp>),
+    Op1(Op1, Rc<Exp>),
+    Op2(Op2, Rc<Exp>, Rc<Exp>),
     Cons(Rc<Exp>, Rc<Exp>),
-    Fst(Rc<Exp>),
-    Snd(Rc<Exp>),
-    IsNum(Rc<Exp>),
-    IsStr(Rc<Exp>),
-    IsCons(Rc<Exp>),
     Lift(Rc<Exp>),
     Run(Rc<Exp>, Rc<Exp>),
     Log(Rc<Exp>, Rc<Exp>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Op1 {
+    Car,
+    Cdr,
+    IsNum,
+    IsSym,
+    IsPair,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Op2 {
+    Add,
+    Sub,
+    Mul,
+    Eq,
 }
 
 pub type Env = Vector<Rc<Val>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Val {
-    Cst(i64),
-    Str(String),
-    Tup(Rc<Val>, Rc<Val>),
+    Num(i64),
+    Sym(String),
+    Pair(Rc<Val>, Rc<Val>),
     Clo(Env, Rc<Exp>),
     Code(Rc<Exp>),
 }
@@ -92,20 +103,15 @@ impl Vm {
     }
 
     pub fn anf(&mut self, env: &Vector<Rc<Exp>>, e: &Exp) -> Rc<Exp> {
-        macro_rules! anf1(($node:expr, $env:expr, $e:expr) => {{
-            let e = self.anf($env, $e);
-            self.reflect($node(e))
-        }});
-        macro_rules! anf2(($node:expr, $env:expr, $e1:expr, $e2:expr) => {{
-            let e1 = self.anf($env, $e1);
-            let e2 = self.anf($env, $e2);
-            self.reflect($node(e1, e2))
-        }});
         match e {
-            Exp::Lit(n) => Exp::lit(*n),
+            Exp::Num(n) => Exp::num(*n),
             Exp::Sym(s) => Exp::sym(s.clone()),
             Exp::Var(x) => env[*x].clone(),
-            Exp::App(e1, e2) => anf2!(Exp::app, env, e1, e2),
+            Exp::App(e1, e2) => {
+                let e1 = self.anf(env, e1);
+                let e2 = self.anf(env, e2);
+                self.reflect(Exp::app(e1, e2))
+            }
             Exp::Lam(e) => {
                 let e = self.reify(|vm| {
                     let mut env = env.clone();
@@ -127,17 +133,24 @@ impl Vm {
                 let b = self.reify(|vm| vm.anf(env, b));
                 self.reflect(Exp::if_(c, a, b))
             }
-            Exp::Plus(e1, e2) => anf2!(Exp::plus, env, e1, e2),
-            Exp::Minus(e1, e2) => anf2!(Exp::minus, env, e1, e2),
-            Exp::Times(e1, e2) => anf2!(Exp::times, env, e1, e2),
-            Exp::Equ(e1, e2) => anf2!(Exp::equ, env, e1, e2),
-            Exp::Cons(e1, e2) => anf2!(Exp::cons, env, e1, e2),
-            Exp::Fst(e) => anf1!(Exp::fst, env, e),
-            Exp::Snd(e) => anf1!(Exp::snd, env, e),
-            Exp::IsNum(e) => anf1!(Exp::is_num, env, e),
-            Exp::IsStr(e) => anf1!(Exp::is_str, env, e),
-            Exp::IsCons(e) => anf1!(Exp::is_cons, env, e),
-            Exp::Lift(e) => anf1!(Exp::lift, env, e),
+            Exp::Op1(op, e) => {
+                let e = self.anf(env, e);
+                self.reflect(Exp::op1(*op, e))
+            }
+            Exp::Op2(op, e1, e2) => {
+                let e1 = self.anf(env, e1);
+                let e2 = self.anf(env, e2);
+                self.reflect(Exp::op2(*op, e1, e2))
+            }
+            Exp::Cons(e1, e2) => {
+                let e1 = self.anf(env, e1);
+                let e2 = self.anf(env, e2);
+                self.reflect(Exp::cons(e1, e2))
+            }
+            Exp::Lift(e) => {
+                let e = self.anf(env, e);
+                self.reflect(Exp::lift(e))
+            }
             Exp::Run(b, e) => {
                 let b = self.anf(env, b);
                 let e = self.reify(|vm| vm.anf(env, e));
@@ -175,9 +188,9 @@ impl Vm {
 
     fn lift(&mut self, v: &Val) -> Rc<Exp> {
         match v {
-            Val::Cst(n) => Exp::lit(*n),
-            Val::Str(s) => Exp::sym(s.clone()),
-            Val::Tup(a, b) => self.reflect(Exp::cons(a.unwrap_code(), b.unwrap_code())),
+            Val::Num(n) => Exp::num(*n),
+            Val::Sym(s) => Exp::sym(s.clone()),
+            Val::Pair(a, b) => self.reflect(Exp::cons(a.unwrap_code(), b.unwrap_code())),
             Val::Clo(env2, e2) => {
                 let key = (env2.clone(), e2.clone());
                 if let Some(var) = self.fun.get(&key) {
@@ -199,8 +212,8 @@ impl Vm {
 
     pub fn evalms(&mut self, env: &Env, e: &Exp) -> Rc<Val> {
         match e {
-            Exp::Lit(n) => Val::cst(*n),
-            Exp::Sym(s) => Val::str(s.clone()),
+            Exp::Num(n) => Val::num(*n),
+            Exp::Sym(s) => Val::sym(s.clone()),
             Exp::Var(x) => env[*x].clone(),
             Exp::Lam(e) => Val::clo(env.clone(), e.clone()),
             Exp::Let(e1, e2) => {
@@ -260,8 +273,8 @@ impl Vm {
             }
 
             Exp::If(c, a, b) => match &*self.evalms(env, c) {
-                Val::Cst(0) => self.evalms(env, b),
-                Val::Cst(_) => self.evalms(env, a),
+                Val::Num(0) => self.evalms(env, b),
+                Val::Num(_) => self.evalms(env, a),
                 Val::Code(c1) => {
                     let a = self.reifyc(|vm| vm.evalms(env, a));
                     let b = self.reifyc(|vm| vm.evalms(env, b));
@@ -270,88 +283,49 @@ impl Vm {
                 c => panic!("invalid if: {c:?}"),
             },
 
-            Exp::Plus(e1, e2) => {
-                let v1 = self.evalms(env, e1);
-                let v2 = self.evalms(env, e2);
-                match (&*v1, &*v2) {
-                    (Val::Cst(n1), Val::Cst(n2)) => Val::cst(n1 + n2),
-                    (Val::Code(s1), Val::Code(s2)) => {
-                        self.reflectc(Exp::plus(s1.clone(), s2.clone()))
-                    }
-                    (v1, v2) => panic!("invalid plus: {v1:?} + {v2:?}"),
+            Exp::Op1(op, e) => {
+                let v = self.evalms(env, e);
+                match (*op, &*v) {
+                    (op, Val::Code(s)) => Val::code(self.reflect(Exp::op1(op, s.clone()))),
+                    (Op1::Car, Val::Pair(a, _)) => a.clone(),
+                    (Op1::Cdr, Val::Pair(_, b)) => b.clone(),
+                    (Op1::IsNum, v) => Val::bool(matches!(v, Val::Num(_))),
+                    (Op1::IsSym, v) => Val::bool(matches!(v, Val::Sym(_))),
+                    (Op1::IsPair, v) => Val::bool(matches!(v, Val::Pair(_, _))),
+                    (op, v) => panic!("cannot eval ({op} {v:?})"),
                 }
             }
-            Exp::Minus(e1, e2) => {
+            Exp::Op2(op, e1, e2) => {
                 let v1 = self.evalms(env, e1);
                 let v2 = self.evalms(env, e2);
-                match (&*v1, &*v2) {
-                    (Val::Cst(n1), Val::Cst(n2)) => Val::cst(n1 - n2),
-                    (Val::Code(s1), Val::Code(s2)) => {
-                        self.reflectc(Exp::minus(s1.clone(), s2.clone()))
+                match (*op, &*v1, &*v2) {
+                    (op, Val::Code(s1), Val::Code(s2)) => {
+                        self.reflectc(Exp::op2(op, s1.clone(), s2.clone()))
                     }
-                    (v1, v2) => panic!("invalid minus: {v1:?} - {v2:?}"),
-                }
-            }
-            Exp::Times(e1, e2) => {
-                let v1 = self.evalms(env, e1);
-                let v2 = self.evalms(env, e2);
-                match (&*v1, &*v2) {
-                    (Val::Cst(n1), Val::Cst(n2)) => Val::cst(n1 * n2),
-                    (Val::Code(s1), Val::Code(s2)) => {
-                        self.reflectc(Exp::times(s1.clone(), s2.clone()))
-                    }
-                    (v1, v2) => panic!("invalid times: {v1:?} * {v2:?}"),
-                }
-            }
-            Exp::Equ(e1, e2) => {
-                let v1 = self.evalms(env, e1);
-                let v2 = self.evalms(env, e2);
-                match (&*v1, &*v2) {
-                    (Val::Cst(n1), Val::Cst(n2)) => Val::bool(n1 == n2),
-                    (Val::Str(s1), Val::Str(s2)) => Val::bool(s1 == s2),
-                    (Val::Tup(a1, b1), Val::Tup(a2, b2)) => Val::bool(a1 == a2 && b1 == b2),
-                    (Val::Code(s1), Val::Code(s2)) => {
-                        self.reflectc(Exp::equ(s1.clone(), s2.clone()))
-                    }
-                    (v1, v2) => panic!("invalid equ: {v1:?} = {v2:?}"),
+                    (Op2::Add, Val::Num(n1), Val::Num(n2)) => Val::num(n1 + n2),
+                    (Op2::Sub, Val::Num(n1), Val::Num(n2)) => Val::num(n1 - n2),
+                    (Op2::Mul, Val::Num(n1), Val::Num(n2)) => Val::num(n1 * n2),
+                    (Op2::Eq, v1, v2) => Val::bool(v1 == v2),
+                    (op, v1, v2) => panic!("cannot eval ({op} {v1:?} {v2:?})"),
                 }
             }
             Exp::Cons(e1, e2) => {
                 let v1 = self.evalms(env, e1);
                 let v2 = self.evalms(env, e2);
-                Val::tup(v1, v2)
+                Val::pair(v1, v2)
             }
-            Exp::Fst(e1) => match &*self.evalms(env, e1) {
-                Val::Tup(a, _) => a.clone(),
-                Val::Code(s1) => Val::code(self.reflect(Exp::fst(s1.clone()))),
-                v1 => panic!("invalid fst: {v1:?}"),
-            },
-            Exp::Snd(e1) => match &*self.evalms(env, e1) {
-                Val::Tup(_, b) => b.clone(),
-                Val::Code(s1) => Val::code(self.reflect(Exp::snd(s1.clone()))),
-                v1 => panic!("invalid snd: {v1:?}"),
-            },
-            Exp::IsNum(e1) => match &*self.evalms(env, e1) {
-                Val::Code(s1) => Val::code(self.reflect(Exp::is_num(s1.clone()))),
-                v1 => Val::bool(matches!(v1, Val::Cst(_))),
-            },
-            Exp::IsStr(e1) => match &*self.evalms(env, e1) {
-                Val::Code(s1) => Val::code(self.reflect(Exp::is_str(s1.clone()))),
-                v1 => Val::bool(matches!(v1, Val::Str(_))),
-            },
-            Exp::IsCons(e1) => match &*self.evalms(env, e1) {
-                Val::Code(s1) => Val::code(self.reflect(Exp::is_cons(s1.clone()))),
-                v1 => Val::bool(matches!(v1, Val::Tup(_, _))),
-            },
         }
     }
 }
 
 impl Exp {
-    pub fn lit(n: i64) -> Rc<Self> {
-        Rc::new(Exp::Lit(n))
+    pub fn num(n: i64) -> Rc<Self> {
+        Rc::new(Exp::Num(n))
     }
     pub fn sym(s: String) -> Rc<Self> {
+        if s.contains(char::is_whitespace) {
+            panic!("symbol contains whitespace");
+        }
         Rc::new(Exp::Sym(s))
     }
     pub fn var(x: usize) -> Rc<Self> {
@@ -369,35 +343,14 @@ impl Exp {
     pub fn if_(b: Rc<Exp>, e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
         Rc::new(Exp::If(b, e1, e2))
     }
-    pub fn plus(e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
-        Rc::new(Exp::Plus(e1, e2))
+    pub fn op1(op: Op1, e: Rc<Exp>) -> Rc<Self> {
+        Rc::new(Exp::Op1(op, e))
     }
-    pub fn minus(e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
-        Rc::new(Exp::Minus(e1, e2))
-    }
-    pub fn times(e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
-        Rc::new(Exp::Times(e1, e2))
-    }
-    pub fn equ(e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
-        Rc::new(Exp::Equ(e1, e2))
+    pub fn op2(op: Op2, e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
+        Rc::new(Exp::Op2(op, e1, e2))
     }
     pub fn cons(e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
         Rc::new(Exp::Cons(e1, e2))
-    }
-    pub fn fst(e: Rc<Exp>) -> Rc<Self> {
-        Rc::new(Exp::Fst(e))
-    }
-    pub fn snd(e: Rc<Exp>) -> Rc<Self> {
-        Rc::new(Exp::Snd(e))
-    }
-    pub fn is_num(e: Rc<Exp>) -> Rc<Self> {
-        Rc::new(Exp::IsNum(e))
-    }
-    pub fn is_str(e: Rc<Exp>) -> Rc<Self> {
-        Rc::new(Exp::IsStr(e))
-    }
-    pub fn is_cons(e: Rc<Exp>) -> Rc<Self> {
-        Rc::new(Exp::IsCons(e))
     }
     pub fn lift(e: Rc<Exp>) -> Rc<Self> {
         Rc::new(Exp::Lift(e))
@@ -409,25 +362,46 @@ impl Exp {
         Rc::new(Exp::Log(b, e))
     }
 
+    pub fn car(e: Rc<Exp>) -> Rc<Self> {
+        Exp::op1(Op1::Car, e)
+    }
+    pub fn cdr(e: Rc<Exp>) -> Rc<Self> {
+        Exp::op1(Op1::Cdr, e)
+    }
+    pub fn is_num(e: Rc<Exp>) -> Rc<Self> {
+        Exp::op1(Op1::IsNum, e)
+    }
+    pub fn is_sym(e: Rc<Exp>) -> Rc<Self> {
+        Exp::op1(Op1::IsSym, e)
+    }
+    pub fn is_pair(e: Rc<Exp>) -> Rc<Self> {
+        Exp::op1(Op1::IsPair, e)
+    }
+    pub fn add(e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
+        Exp::op2(Op2::Add, e1, e2)
+    }
+    pub fn sub(e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
+        Exp::op2(Op2::Sub, e1, e2)
+    }
+    pub fn mul(e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
+        Exp::op2(Op2::Mul, e1, e2)
+    }
+    pub fn eq(e1: Rc<Exp>, e2: Rc<Exp>) -> Rc<Self> {
+        Exp::op2(Op2::Eq, e1, e2)
+    }
+
     pub fn pretty(&self, env: &Vec<String>) -> String {
         match self {
-            Exp::Lit(n) => format!("{n}"),
+            Exp::Num(n) => format!("{n}"),
             Exp::Sym(s) => format!("'{s}"),
             Exp::Var(x) => match env.get(*x) {
                 Some(s) => s.clone(),
                 None => "?".to_owned(),
             },
-            Exp::IsNum(a) => format!("(num? {})", a.pretty(env)),
-            Exp::IsStr(a) => format!("(str? {})", a.pretty(env)),
-            Exp::IsCons(a) => format!("(tup? {})", a.pretty(env)),
+            Exp::Op1(op, a) => format!("({op} {})", a.pretty(env)),
+            Exp::Op2(op, a, b) => format!("({op} {} {})", a.pretty(env), b.pretty(env)),
             Exp::Lift(a) => format!("(lift {})", a.pretty(env)),
-            Exp::Fst(a) => format!("(car {})", a.pretty(env)),
-            Exp::Snd(a) => format!("(cdr {})", a.pretty(env)),
             Exp::Cons(a, b) => format!("(cons {} {})", a.pretty(env), b.pretty(env)),
-            Exp::Equ(a, b) => format!("(eq? {} {})", a.pretty(env), b.pretty(env)),
-            Exp::Plus(a, b) => format!("(+ {} {})", a.pretty(env), b.pretty(env)),
-            Exp::Minus(a, b) => format!("(- {} {})", a.pretty(env), b.pretty(env)),
-            Exp::Times(a, b) => format!("(* {} {})", a.pretty(env), b.pretty(env)),
             Exp::Run(a, b) => format!("(run {} {})", a.pretty(env), b.pretty(env)),
             Exp::Log(a, b) => format!("(log {} {})", a.pretty(env), b.pretty(env)),
             Exp::App(a, b) => {
@@ -457,14 +431,14 @@ impl Exp {
 }
 
 impl Val {
-    fn cst(n: i64) -> Rc<Self> {
-        Rc::new(Val::Cst(n))
+    fn num(n: i64) -> Rc<Self> {
+        Rc::new(Val::Num(n))
     }
-    fn str(s: String) -> Rc<Self> {
-        Rc::new(Val::Str(s))
+    fn sym(s: String) -> Rc<Self> {
+        Rc::new(Val::Sym(s))
     }
-    fn tup(a: Rc<Val>, b: Rc<Val>) -> Rc<Self> {
-        Rc::new(Val::Tup(a, b))
+    fn pair(a: Rc<Val>, b: Rc<Val>) -> Rc<Self> {
+        Rc::new(Val::Pair(a, b))
     }
     fn clo(env: Env, e: Rc<Exp>) -> Rc<Self> {
         Rc::new(Val::Clo(env, e))
@@ -474,7 +448,7 @@ impl Val {
     }
 
     fn bool(b: bool) -> Rc<Self> {
-        Val::cst(if b { 1 } else { 0 })
+        Val::num(if b { 1 } else { 0 })
     }
 
     fn unwrap_code(&self) -> Rc<Exp> {
@@ -486,24 +460,47 @@ impl Val {
     }
 }
 
+impl Display for Op1 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Op1::Car => write!(f, "car"),
+            Op1::Cdr => write!(f, "cdr"),
+            Op1::IsNum => write!(f, "num?"),
+            Op1::IsSym => write!(f, "sym?"),
+            Op1::IsPair => write!(f, "pair?"),
+        }
+    }
+}
+
+impl Display for Op2 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Op2::Add => write!(f, "+"),
+            Op2::Sub => write!(f, "-"),
+            Op2::Mul => write!(f, "*"),
+            Op2::Eq => write!(f, "eq?"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn factorial() {
-        let f_self = Exp::app(Exp::var(0), Exp::lit(99));
+        let f_self = Exp::app(Exp::var(0), Exp::num(99));
         let n = Exp::var(3);
 
         let fac_body = Exp::lam(Exp::if_(
             n.clone(),
-            Exp::times(
+            Exp::mul(
                 n.clone(),
-                Exp::app(f_self, Exp::minus(n, Exp::lift(Exp::lit(1)))),
+                Exp::app(f_self, Exp::sub(n, Exp::lift(Exp::num(1)))),
             ),
-            Exp::lift(Exp::lit(1)),
+            Exp::lift(Exp::num(1)),
         ));
-        let fac = Exp::app(Exp::lam(Exp::lift(fac_body)), Exp::lit(99));
+        let fac = Exp::app(Exp::lam(Exp::lift(fac_body)), Exp::num(99));
         let mut vm = Vm::new();
         let code = vm.reifyc(|vm| vm.evalms(&Vector::new(), &*fac));
         let out = Exp::let_(
@@ -511,13 +508,13 @@ mod tests {
                 Exp::if_(
                     Exp::var(1),
                     Exp::let_(
-                        Exp::minus(Exp::var(1), Exp::lit(1)),
+                        Exp::sub(Exp::var(1), Exp::num(1)),
                         Exp::let_(
                             Exp::app(Exp::var(0), Exp::var(2)),
-                            Exp::let_(Exp::times(Exp::var(1), Exp::var(3)), Exp::var(4)),
+                            Exp::let_(Exp::mul(Exp::var(1), Exp::var(3)), Exp::var(4)),
                         ),
                     ),
-                    Exp::lit(1),
+                    Exp::num(1),
                 ),
                 Exp::var(2),
             )),
@@ -526,8 +523,8 @@ mod tests {
         assert_eq!(code, out);
 
         assert_eq!(
-            Val::cst(24),
-            vm.evalms(&Vector::new(), &Exp::App(code, Exp::lit(4))),
+            Val::num(24),
+            vm.evalms(&Vector::new(), &Exp::App(code, Exp::num(4))),
         );
     }
 
@@ -548,10 +545,10 @@ mod tests {
                 )))),
             )),
             Exp::lam(/*0 1*/ Exp::lam(/*2 3*/ Exp::if_(
-                Exp::is_cons(Exp::var(3)),
-                Exp::plus(
-                    Exp::app(Exp::var(1), Exp::fst(Exp::var(3))),
-                    Exp::app(Exp::var(1), Exp::snd(Exp::var(3))),
+                Exp::is_pair(Exp::var(3)),
+                Exp::add(
+                    Exp::app(Exp::var(1), Exp::car(Exp::var(3))),
+                    Exp::app(Exp::var(1), Exp::cdr(Exp::var(3))),
                 ),
                 Exp::var(3),
             ))),
@@ -563,29 +560,29 @@ mod tests {
             &Vector::new(),
             &Exp::App(
                 Exp::app(tree_sum.clone(), Exp::lam(Exp::var(1))),
-                Exp::cons(Exp::cons(Exp::lit(1), Exp::lit(2)), Exp::lit(3)),
+                Exp::cons(Exp::cons(Exp::num(1), Exp::num(2)), Exp::num(3)),
             ),
         );
-        assert_eq!(Val::cst(6), v);
+        assert_eq!(Val::num(6), v);
 
         let tree_sum_lifted = Exp::let_(
             /*0*/
             Exp::lam(/*0 1*/ Exp::let_(
-                /*2*/ Exp::is_cons(Exp::var(1)),
+                /*2*/ Exp::is_pair(Exp::var(1)),
                 Exp::let_(
                     /*3*/
                     Exp::if_(
                         Exp::var(2),
                         Exp::let_(
-                            /*3*/ Exp::fst(Exp::var(1)),
+                            /*3*/ Exp::car(Exp::var(1)),
                             Exp::let_(
                                 /*4*/ Exp::app(Exp::var(0), Exp::var(3)),
                                 Exp::let_(
-                                    /*5*/ Exp::snd(Exp::var(1)),
+                                    /*5*/ Exp::cdr(Exp::var(1)),
                                     Exp::let_(
                                         /*6*/ Exp::app(Exp::var(0), Exp::var(5)),
                                         Exp::let_(
-                                            /*7*/ Exp::plus(Exp::var(4), Exp::var(6)),
+                                            /*7*/ Exp::add(Exp::var(4), Exp::var(6)),
                                             Exp::var(7),
                                         ),
                                     ),
