@@ -102,6 +102,8 @@ impl Vm {
         self.fresh()
     }
 
+    /// A-normal form conversion. Useful for checking generated against expected
+    /// code.
     pub fn anf(&mut self, env: &Vector<Rc<Exp>>, e: &Exp) -> Rc<Exp> {
         match e {
             Exp::Num(n) => Exp::num(*n),
@@ -186,6 +188,7 @@ impl Vm {
         })
     }
 
+    /// Normalization by Evaluation–style polymorphic lift operator.
     fn lift(&mut self, v: &Val) -> Rc<Exp> {
         match v {
             Val::Num(n) => Exp::num(*n),
@@ -210,6 +213,7 @@ impl Vm {
         }
     }
 
+    /// Multi-stage evaluation.
     pub fn evalms(&mut self, env: &Env, e: &Exp) -> Rc<Val> {
         match e {
             Exp::Num(n) => Val::num(*n),
@@ -228,6 +232,8 @@ impl Vm {
             }
 
             Exp::Run(b, e) => match &*self.evalms(env, b) {
+                // The first argument determines whether to generate `run`
+                // statement or run code directly.
                 Val::Code(b) => {
                     let e = self.reifyc(|vm| vm.evalms(env, e));
                     self.reflectc(Exp::run(b.clone(), e))
