@@ -92,15 +92,20 @@ impl Vm {
     }
 
     pub fn anf(&mut self, env: &Vector<Rc<Exp>>, e: &Exp) -> Rc<Exp> {
+        macro_rules! anf1(($node:expr, $env:expr, $e:expr) => {{
+            let e = self.anf($env, $e);
+            self.reflect($node(e))
+        }});
+        macro_rules! anf2(($node:expr, $env:expr, $e1:expr, $e2:expr) => {{
+            let e1 = self.anf($env, $e1);
+            let e2 = self.anf($env, $e2);
+            self.reflect($node(e1, e2))
+        }});
         match e {
             Exp::Lit(n) => Exp::lit(*n),
             Exp::Sym(s) => Exp::sym(s.clone()),
             Exp::Var(x) => env[*x].clone(),
-            Exp::App(e1, e2) => {
-                let e1 = self.anf(env, e1);
-                let e2 = self.anf(env, e2);
-                self.reflect(Exp::app(e1, e2))
-            }
+            Exp::App(e1, e2) => anf2!(Exp::app, env, e1, e2),
             Exp::Lam(e) => {
                 let e = self.reify(|vm| {
                     let mut env = env.clone();
@@ -122,55 +127,17 @@ impl Vm {
                 let b = self.reify(|vm| vm.anf(env, b));
                 self.reflect(Exp::if_(c, a, b))
             }
-            Exp::Plus(e1, e2) => {
-                let e1 = self.anf(env, e1);
-                let e2 = self.anf(env, e2);
-                self.reflect(Exp::plus(e1, e2))
-            }
-            Exp::Minus(e1, e2) => {
-                let e1 = self.anf(env, e1);
-                let e2 = self.anf(env, e2);
-                self.reflect(Exp::minus(e1, e2))
-            }
-            Exp::Times(e1, e2) => {
-                let e1 = self.anf(env, e1);
-                let e2 = self.anf(env, e2);
-                self.reflect(Exp::times(e1, e2))
-            }
-            Exp::Equ(e1, e2) => {
-                let e1 = self.anf(env, e1);
-                let e2 = self.anf(env, e2);
-                self.reflect(Exp::equ(e1, e2))
-            }
-            Exp::Cons(e1, e2) => {
-                let e1 = self.anf(env, e1);
-                let e2 = self.anf(env, e2);
-                self.reflect(Exp::cons(e1, e2))
-            }
-            Exp::Fst(e) => {
-                let e = self.anf(env, e);
-                self.reflect(Exp::fst(e))
-            }
-            Exp::Snd(e) => {
-                let e = self.anf(env, e);
-                self.reflect(Exp::snd(e))
-            }
-            Exp::IsNum(e) => {
-                let e = self.anf(env, e);
-                self.reflect(Exp::is_num(e))
-            }
-            Exp::IsStr(e) => {
-                let e = self.anf(env, e);
-                self.reflect(Exp::is_str(e))
-            }
-            Exp::IsCons(e) => {
-                let e = self.anf(env, e);
-                self.reflect(Exp::is_cons(e))
-            }
-            Exp::Lift(e) => {
-                let e = self.anf(env, e);
-                self.reflect(Exp::lift(e))
-            }
+            Exp::Plus(e1, e2) => anf2!(Exp::plus, env, e1, e2),
+            Exp::Minus(e1, e2) => anf2!(Exp::minus, env, e1, e2),
+            Exp::Times(e1, e2) => anf2!(Exp::times, env, e1, e2),
+            Exp::Equ(e1, e2) => anf2!(Exp::equ, env, e1, e2),
+            Exp::Cons(e1, e2) => anf2!(Exp::cons, env, e1, e2),
+            Exp::Fst(e) => anf1!(Exp::fst, env, e),
+            Exp::Snd(e) => anf1!(Exp::snd, env, e),
+            Exp::IsNum(e) => anf1!(Exp::is_num, env, e),
+            Exp::IsStr(e) => anf1!(Exp::is_str, env, e),
+            Exp::IsCons(e) => anf1!(Exp::is_cons, env, e),
+            Exp::Lift(e) => anf1!(Exp::lift, env, e),
             Exp::Run(b, e) => {
                 let b = self.anf(env, b);
                 let e = self.reify(|vm| vm.anf(env, e));
