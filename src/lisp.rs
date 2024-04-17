@@ -34,7 +34,7 @@ use winnow::{
     token::take_while,
 };
 
-use crate::base::{Exp, Val};
+use crate::base::{Exp, Val, VarEnv};
 
 // TODO: Questions
 // - Why do the authors parse to Val then translate it to Exp, rather than
@@ -106,7 +106,7 @@ fn ws(input: &mut &str) -> PResult<()> {
 }
 
 /// Convert an `Exp` encoded as a `Val` to a proper `Exp`.
-pub fn trans(v: &Val, env: Vec<String>) -> Rc<Exp> {
+pub fn trans(v: &Val, env: VarEnv) -> Rc<Exp> {
     Translator {
         env,
         list: Vec::with_capacity(3),
@@ -131,7 +131,7 @@ impl Val {
 }
 
 struct Translator {
-    env: Vec<String>,
+    env: VarEnv,
     list: Vec<Rc<Val>>,
 }
 
@@ -163,8 +163,8 @@ impl Translator {
 
         match v {
             Val::Num(n) => Exp::num(*n),
-            Val::Sym(s) => match self.env.iter().enumerate().rev().find(|&(_, x)| x == s) {
-                Some((i, _)) => Exp::var(i),
+            Val::Sym(s) => match self.env.get(s) {
+                Some(i) => Exp::var(i),
                 None => panic!("symbol `{s}` not in environment {:?}", self.env),
             },
 

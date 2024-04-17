@@ -39,8 +39,6 @@ pub enum Op2 {
     Eq,
 }
 
-pub type Env = Vector<Rc<Val>>;
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Val {
     Num(i64),
@@ -48,6 +46,16 @@ pub enum Val {
     Pair(Rc<Val>, Rc<Val>),
     Clo(Env, Rc<Exp>),
     Code(Rc<Exp>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Env {
+    env: Vector<Rc<Val>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct VarEnv {
+    env: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -205,8 +213,8 @@ impl Vm {
                     self.fun.insert(key, self.fresh);
                     let e = self.reify(|vm| {
                         let mut env = env2.clone();
-                        env.push_back(Val::code(vm.fresh()));
-                        env.push_back(Val::code(vm.fresh()));
+                        env.push(Val::code(vm.fresh()));
+                        env.push(Val::code(vm.fresh()));
                         vm.evalms(&env, &*e2).unwrap_code()
                     });
                     self.reflect(Exp::lam(e))
@@ -221,11 +229,11 @@ impl Vm {
         match e {
             Exp::Num(n) => Val::num(*n),
             Exp::Sym(s) => Val::sym(s.clone()),
-            Exp::Var(x) => env[*x].clone(),
+            Exp::Var(x) => env.get(*x).unwrap(),
             Exp::Lam(e) => Val::clo(env.clone(), e.clone()),
             Exp::Let(e1, e2) => {
                 let mut env2 = env.clone();
-                env2.push_back(self.evalms(env, e1));
+                env2.push(self.evalms(env, e1));
                 self.evalms(&env2, e2)
             }
 
@@ -268,8 +276,8 @@ impl Vm {
                 match (&*v1, &*v2) {
                     (Val::Clo(env3, e3), _) => {
                         let mut env = env3.clone();
-                        env.push_back(Val::clo(env3.clone(), e3.clone()));
-                        env.push_back(v2);
+                        env.push(Val::clo(env3.clone(), e3.clone()));
+                        env.push(v2);
                         self.evalms(&env, &**e3)
                     }
                     (Val::Code(s1), Val::Code(s2)) => {
@@ -467,6 +475,83 @@ impl Val {
             panic!("val not code: {self:?}");
         }
     }
+
+    pub fn pretty(&self, env: &Vec<String>) -> String {
+        match self {
+            Val::Num(n) => format!("{n}"),
+            Val::Sym(s) => format!("{s}"),
+            Val::Pair(a, b) => format!("({} {})", a.pretty(env), b.pretty(env)),
+            Val::Clo(cenv, e) => format!("(closure {} {})", cenv.pretty(env), e.pretty(env)),
+            Val::Code(e) => format!("(code {})", e.pretty(env)),
+        }
+    }
+}
+
+impl Env {
+    pub fn new() -> Self {
+        Env { env: Vector::new() }
+    }
+
+    pub fn get(&self, i: usize) -> Option<Rc<Val>> {
+        self.env.get(i).map(Rc::clone)
+    }
+
+    pub fn push(&mut self, value: Rc<Val>) {
+        self.env.push_back(value);
+    }
+
+    pub fn len(&self) -> usize {
+        self.env.len()
+    }
+
+    pub fn pretty(&self, env: &Vec<String>) -> String {
+        let mut s = String::new();
+        s.push_str("(env");
+        for v in &self.env {
+            s.push(' ');
+            s.push_str(&v.pretty(env));
+        }
+        s.push(')');
+        s
+    }
+}
+
+impl VarEnv {
+    pub fn new() -> Self {
+        VarEnv { env: Vec::new() }
+    }
+
+    pub fn get(&self, x: &str) -> Option<usize> {
+        self.env
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|&(_, y)| y == x)
+            .map(|(i, _)| i)
+    }
+
+    pub fn push(&mut self, x: String) {
+        self.env.push(x);
+    }
+
+    pub fn pop(&mut self) {
+        self.env.pop().unwrap();
+    }
+
+    pub fn len(&self) -> usize {
+        self.env.len()
+    }
+
+    pub fn pretty(&self) -> String {
+        let mut s = String::new();
+        s.push_str("(env");
+        for v in &self.env {
+            s.push(' ');
+            s.push_str(v);
+        }
+        s.push(')');
+        s
+    }
 }
 
 impl Display for Op1 {
@@ -511,7 +596,7 @@ mod tests {
         ));
         let fac = Exp::app(Exp::lam(Exp::lift(fac_body)), Exp::num(99));
         let mut vm = Vm::new();
-        let code = vm.reifyc(|vm| vm.evalms(&Vector::new(), &*fac));
+        let code = vm.reifyc(|vm| vm.evalms(&Env::new(), &*fac));
         let out = Exp::let_(
             Exp::lam(Exp::let_(
                 Exp::if_(
@@ -533,7 +618,7 @@ mod tests {
 
         assert_eq!(
             Val::num(24),
-            vm.evalms(&Vector::new(), &Exp::App(code, Exp::num(4))),
+            vm.evalms(&Env::new(), &Exp::App(code, Exp::num(4))),
         );
     }
 
@@ -566,7 +651,7 @@ mod tests {
         // Testing normal execution
         let mut vm = Vm::new();
         let v = vm.evalms(
-            &Vector::new(),
+            &Env::new(),
             &Exp::App(
                 Exp::app(tree_sum.clone(), Exp::lam(Exp::var(1))),
                 Exp::cons(Exp::cons(Exp::num(1), Exp::num(2)), Exp::num(3)),
@@ -610,7 +695,7 @@ mod tests {
         let mut vm = Vm::new();
         let e = vm.reifyc(|vm| {
             vm.evalms(
-                &Vector::new(),
+                &Env::new(),
                 &Exp::Lift(Exp::app(tree_sum.clone(), Exp::lam(Exp::lift(Exp::var(1))))),
             )
         });
