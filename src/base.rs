@@ -454,11 +454,15 @@ impl Exp {
             Exp::App(a, b) => {
                 format!("({} {})", a.pretty(env), b.pretty(env))
             }
-            Exp::Let(a, b) => {
-                let mut env2 = env.clone();
-                env2.push(format!("x{}", env.len()));
-                format!("(let x{} {} {})", env.len(), a.pretty(env), b.pretty(&env2))
-            }
+            Exp::Let(a, b) => match &**b {
+                // Hide a binding that is immediately referenced.
+                Exp::Var(n) if *n == env.len() => a.pretty(env),
+                _ => {
+                    let mut env2 = env.clone();
+                    env2.push(format!("x{}", env.len()));
+                    format!("(let x{} {} {})", env.len(), a.pretty(env), b.pretty(&env2))
+                }
+            },
             Exp::Lam(e) => {
                 let mut env2 = env.clone();
                 env2.push(format!("f{}", env.len()));
