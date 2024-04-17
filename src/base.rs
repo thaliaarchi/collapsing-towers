@@ -197,6 +197,9 @@ impl Vm {
             Val::Clo(env2, e2) => {
                 let key = (env2.clone(), e2.clone());
                 if let Some(var) = self.fun.get(&key) {
+                    // Use the memoized computation. This is not essential to
+                    // the algorithm, but appears necessary with recursion depth
+                    // constraints.
                     Exp::var(*var)
                 } else {
                     self.fun.insert(key, self.fresh);
@@ -437,23 +440,23 @@ impl Exp {
 }
 
 impl Val {
-    fn num(n: i64) -> Rc<Self> {
+    pub fn num(n: i64) -> Rc<Self> {
         Rc::new(Val::Num(n))
     }
-    fn sym(s: String) -> Rc<Self> {
-        Rc::new(Val::Sym(s))
+    pub fn sym<S: Into<String>>(s: S) -> Rc<Self> {
+        Rc::new(Val::Sym(s.into()))
     }
-    fn pair(a: Rc<Val>, b: Rc<Val>) -> Rc<Self> {
+    pub fn pair(a: Rc<Val>, b: Rc<Val>) -> Rc<Self> {
         Rc::new(Val::Pair(a, b))
     }
-    fn clo(env: Env, e: Rc<Exp>) -> Rc<Self> {
+    pub fn clo(env: Env, e: Rc<Exp>) -> Rc<Self> {
         Rc::new(Val::Clo(env, e))
     }
-    fn code(e: Rc<Exp>) -> Rc<Self> {
+    pub fn code(e: Rc<Exp>) -> Rc<Self> {
         Rc::new(Val::Code(e))
     }
 
-    fn bool(b: bool) -> Rc<Self> {
+    pub fn bool(b: bool) -> Rc<Self> {
         Val::num(if b { 1 } else { 0 })
     }
 

@@ -11,3 +11,4 @@ categories = ["compilers"]
 
 [dependencies]
 im-rc = "15.1"
+winnow = "0.6.6"
