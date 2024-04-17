@@ -108,91 +108,146 @@ fn ws(input: &mut &str) -> PResult<()> {
 
 /// Convert an `Exp` encoded as a `Val` to a proper `Exp`.
 pub fn trans(v: &Val, env: Vector<String>) -> Rc<Exp> {
-    // TODO:
-    // - Port `quote`, `trans`, and `lift-ref` translation.
-    // - Refactor list translation to unpack lists into a Vec, then dispatch on
-    //   the symbol, then check arity.
-    // - Return Result.
-    match v {
-        Val::Num(n) => Exp::num(*n),
-        Val::Sym(s) => match env.iter().enumerate().rev().find(|&(_, x)| x == s) {
-            Some((i, _)) => Exp::var(i),
-            None => panic!("symbol `{s}` not in environment {env:?}"),
-        },
-        Val::Pair(l, r) => match (&**l, &**r) {
-            (Val::Sym(s), Val::Pair(a, b)) => match &**b {
-                // Unary functions
-                Val::Sym(b) if b == "." => match &**s {
-                    "num?" => Exp::is_num(trans(a, env)),
-                    "sym?" => Exp::is_sym(trans(a, env)),
-                    "pair?" => Exp::is_pair(trans(a, env)),
-                    "car" => Exp::car(trans(a, env)),
-                    "cdr" => Exp::cdr(trans(a, env)),
-                    "cadr" => Exp::car(Exp::cdr(trans(a, env))),
-                    "caddr" => Exp::car(Exp::cdr(Exp::cdr(trans(a, env)))),
-                    "cadddr" => Exp::car(Exp::cdr(Exp::cdr(Exp::cdr(trans(a, env))))),
-                    "lift" => Exp::lift(trans(a, env)),
-                    "nolift" => trans(a, env),
-                    "quote" => match &**a {
-                        Val::Sym(a) => Exp::sym(a.clone()),
-                        _ => todo!(),
-                    },
-                    "trans" => todo!(),
-                    "lift-rel" => todo!(),
-                    _ => panic!("unrecognized unary function `{s}`"),
-                },
-                Val::Pair(b, c) => match &**c {
-                    // Binary functions
-                    Val::Sym(c) if c == "." => match &**s {
-                        "+" => Exp::add(trans(a, env.clone()), trans(b, env)),
-                        "-" => Exp::sub(trans(a, env.clone()), trans(b, env)),
-                        "*" => Exp::mul(trans(a, env.clone()), trans(b, env)),
-                        "cons" => Exp::cons(trans(a, env.clone()), trans(b, env)),
-                        "eq?" => Exp::eq(trans(a, env.clone()), trans(b, env)),
-                        "run" => Exp::run(trans(a, env.clone()), trans(b, env)),
-                        "log" => Exp::log(trans(a, env.clone()), trans(b, env)),
-                        _ => panic!("unrecognized binary function `{s}`"),
-                    },
-                    Val::Pair(c, d) => match &**d {
+    Translator {
+        list: Vec::with_capacity(3),
+    }
+    .trans(v, env)
+}
+
+impl Val {
+    pub fn unfold_list(&self, list: &mut Vec<Rc<Val>>) {
+        let mut v = self;
+        loop {
+            match &*v {
+                Val::Pair(a, b) => {
+                    list.push(a.clone());
+                    v = &**b;
+                }
+                Val::Sym(s) if s == "." => break,
+                _ => panic!("unexpected value in list"),
+            }
+        }
+    }
+}
+
+struct Translator {
+    list: Vec<Rc<Val>>,
+}
+
+impl Translator {
+    fn trans(&mut self, v: &Val, env: Vector<String>) -> Rc<Exp> {
+        // TODO:
+        // - Port `quote`, `trans`, and `lift-ref` translation.
+        // - Return Result.
+
+        // Extract the values from `self.list` and pass them to the expression.
+        // Only one list is needed for the entire translation, and this pattern
+        // keeps the borrow checker happy, yet is optimized away.
+        macro_rules! unpack_list(($len:literal, |$($a:ident),+| $e:expr) => {
+            if self.list.len() == $len {
+                let mut it = self.list.drain(..);
+                $(let $a = &*it.next().unwrap();)+
+                assert!(it.len() == 0);
+                drop(it);
+                $e
+            } else {
+                panic!("arity mismatch");
+            }
+        });
+        macro_rules! op(
+            (|$a:ident| $e:expr) => { unpack_list!(1, |$a| $e) };
+            (|$a:ident, $b:ident| $e:expr) => { unpack_list!(2, |$a, $b| $e) };
+            (|$a:ident, $b:ident, $c:ident| $e:expr) => { unpack_list!(3, |$a, $b, $c| $e) };
+        );
+
+        match v {
+            Val::Num(n) => Exp::num(*n),
+            Val::Sym(s) => match env.iter().enumerate().rev().find(|&(_, x)| x == s) {
+                Some((i, _)) => Exp::var(i),
+                None => panic!("symbol `{s}` not in environment {env:?}"),
+            },
+
+            Val::Pair(a, _) => {
+                self.list.clear();
+                v.unfold_list(&mut self.list);
+                match &**a {
+                    Val::Sym(s) => match &**s {
+                        // Unary functions
+                        "num?" => op!(|a| Exp::is_num(self.trans(a, env))),
+                        "sym?" => op!(|a| Exp::is_sym(self.trans(a, env))),
+                        "pair?" => op!(|a| Exp::is_pair(self.trans(a, env))),
+                        "car" => op!(|a| Exp::car(self.trans(a, env))),
+                        "cdr" => op!(|a| Exp::cdr(self.trans(a, env))),
+                        "cadr" => op!(|a| Exp::car(Exp::cdr(self.trans(a, env)))),
+                        "caddr" => op!(|a| Exp::car(Exp::cdr(Exp::cdr(self.trans(a, env))))),
+                        "cadddr" => {
+                            op!(|a| Exp::car(Exp::cdr(Exp::cdr(Exp::cdr(self.trans(a, env))))))
+                        }
+                        "lift" => op!(|a| Exp::lift(self.trans(a, env))),
+                        "nolift" => op!(|a| self.trans(a, env)),
+                        "quote" => op!(|a| match a {
+                            Val::Sym(a) => Exp::sym(a.clone()),
+                            _ => todo!(),
+                        }),
+                        "trans" => op!(|_a| todo!()),
+                        "lift-rel" => op!(|_a| todo!()),
+
+                        // Binary functions
+                        "+" => {
+                            op!(|a, b| Exp::add(self.trans(a, env.clone()), self.trans(b, env)))
+                        }
+                        "-" => {
+                            op!(|a, b| Exp::sub(self.trans(a, env.clone()), self.trans(b, env)))
+                        }
+                        "*" => {
+                            op!(|a, b| Exp::mul(self.trans(a, env.clone()), self.trans(b, env)))
+                        }
+                        "cons" => {
+                            op!(|a, b| Exp::cons(self.trans(a, env.clone()), self.trans(b, env)))
+                        }
+                        "eq?" => {
+                            op!(|a, b| Exp::eq(self.trans(a, env.clone()), self.trans(b, env)))
+                        }
+                        "run" => {
+                            op!(|a, b| Exp::run(self.trans(a, env.clone()), self.trans(b, env)))
+                        }
+                        "log" => {
+                            op!(|a, b| Exp::log(self.trans(a, env.clone()), self.trans(b, env)))
+                        }
+
                         // Ternary functions
-                        Val::Sym(d) if d == "." => match &**s {
-                            "let" => match &**a {
-                                Val::Sym(a) => {
-                                    let mut env2 = env.clone();
-                                    env2.push_back(a.clone());
-                                    Exp::let_(trans(b, env), trans(c, env2))
-                                }
-                                _ => panic!("let binding name must be a symbol"),
-                            },
-                            "lambda" => match (&**a, &**b) {
-                                (Val::Sym(a), Val::Sym(b)) => {
-                                    let mut env2 = env.clone();
-                                    env2.push_back(a.clone());
-                                    env2.push_back(b.clone());
-                                    Exp::lam(trans(c, env2))
-                                }
-                                _ => panic!("lambda self and parameter names must be symbols"),
-                            },
-                            "if" => Exp::if_(
-                                trans(a, env.clone()),
-                                trans(b, env.clone()),
-                                trans(c, env),
-                            ),
-                            _ => panic!("unrecognized ternary function `{s}"),
-                        },
-                        _ => panic!("unrecognized value"),
+                        "let" => op!(|a, b, c| match a {
+                            Val::Sym(a) => {
+                                let mut env2 = env.clone();
+                                env2.push_back(a.clone());
+                                Exp::let_(self.trans(b, env), self.trans(c, env2))
+                            }
+                            _ => panic!("let binding name must be a symbol"),
+                        }),
+                        "lambda" => op!(|a, b, c| match (a, b) {
+                            (Val::Sym(a), Val::Sym(b)) => {
+                                let mut env2 = env.clone();
+                                env2.push_back(a.clone());
+                                env2.push_back(b.clone());
+                                Exp::lam(self.trans(c, env2))
+                            }
+                            _ => panic!("lambda self and parameter names must be symbols"),
+                        }),
+                        "if" => op!(|a, b, c| Exp::if_(
+                            self.trans(a, env.clone()),
+                            self.trans(b, env.clone()),
+                            self.trans(c, env),
+                        )),
+
+                        _ => panic!("unrecognized function: {s}"),
                     },
-                    _ => panic!("unrecognized value"),
-                },
-                _ => panic!("unrecognized value"),
-            },
-            (a, Val::Pair(b, c)) => match &**c {
-                Val::Sym(c) if c == "." => Exp::app(trans(a, env.clone()), trans(b, env)),
-                _ => panic!("cannot apply non-binary functions"),
-            },
-            _ => panic!("unrecognized value"),
-        },
-        _ => panic!("unrecognized value"),
+
+                    _ => op!(|a, b| Exp::app(self.trans(a, env.clone()), self.trans(b, env))),
+                }
+            }
+
+            Val::Clo(_, _) | Val::Code(_) => panic!("unrecognized value"),
+        }
     }
 }
 
