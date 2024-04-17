@@ -2,7 +2,7 @@
 //!
 //! # Grammar
 //!
-//! The original, reference grammar:
+//! This follows the grammar of popl18/lisp.scala:
 //!
 //! ```bnf
 //! exp ::=
@@ -28,7 +28,7 @@ use std::str;
 
 use winnow::{
     ascii::{dec_int, multispace1, till_line_ending},
-    combinator::{alt, cut_err, delimited, opt, preceded, repeat},
+    combinator::{alt, cut_err, delimited, preceded, repeat, separated},
     error::{ContextError, ParseError, StrContext},
     prelude::*,
     token::take_while,
@@ -71,7 +71,7 @@ fn quote(input: &mut &str) -> PResult<Rc<Val>> {
 fn list(input: &mut &str) -> PResult<Rc<Val>> {
     delimited(
         '(',
-        preceded(ws0, alt((list_elements, unit))),
+        preceded(ws0, list_elements),
         cut_err(preceded(ws0, ')')),
     )
     .context(StrContext::Label("list"))
@@ -79,15 +79,11 @@ fn list(input: &mut &str) -> PResult<Rc<Val>> {
 }
 
 fn list_elements(input: &mut &str) -> PResult<Rc<Val>> {
-    let mut acc = value.parse_next(input)?;
-    while let Some(v) = opt(preceded(ws1, value)).parse_next(input)? {
-        acc = Val::pair(acc, v)
-    }
-    Ok(acc)
-}
-
-fn unit(input: &mut &str) -> PResult<Rc<Val>> {
-    ().map(|_| Val::sym(".")).parse_next(input)
+    let elems: Vec<_> = separated(0.., value, ws1).parse_next(input)?;
+    Ok(elems
+        .into_iter()
+        .rev()
+        .fold(Val::sym("."), |r, l| Val::pair(l, r)))
 }
 
 fn ws0(input: &mut &str) -> PResult<()> {
@@ -111,7 +107,7 @@ mod tests {
         let code = "
             (let code (trans '(lambda _ x (+ x 42)))
               ; hello
-              code)
+              (cons code ()))
         ";
         let parsed = Val::pair(
             Val::sym("let"),
@@ -149,7 +145,13 @@ mod tests {
                             Val::sym("."),
                         ),
                     ),
-                    Val::pair(Val::sym("code"), Val::sym(".")),
+                    Val::pair(
+                        Val::pair(
+                            Val::sym("cons"),
+                            Val::pair(Val::sym("code"), Val::pair(Val::sym("."), Val::sym("."))),
+                        ),
+                        Val::sym("."),
+                    ),
                 ),
             ),
         );
