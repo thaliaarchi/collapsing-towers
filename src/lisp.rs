@@ -234,7 +234,7 @@ impl Translator {
                             op!(|a, b, c| Exp::if_(self.trans(&a), self.trans(&b), self.trans(&c)))
                         }
 
-                        _ => panic!("unrecognized function: {s}"),
+                        _ => unpack_list!(2, |a, b| Exp::app(self.trans(&a), self.trans(&b))),
                     },
 
                     _ => unpack_list!(2, |a, b| Exp::app(self.trans(&a), self.trans(&b))),
