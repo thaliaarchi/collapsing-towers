@@ -147,7 +147,7 @@ impl Translator {
         macro_rules! unpack_list(($len:literal, |$($a:ident),+| $e:expr) => {
             if self.list.len() == $len {
                 let mut it = self.list.drain(..);
-                $(let $a = &*it.next().unwrap();)+
+                $(let $a = it.next().unwrap();)+
                 assert!(it.len() == 0);
                 drop(it);
                 $e
@@ -174,48 +174,48 @@ impl Translator {
                 match &**a {
                     Val::Sym(s) => match &**s {
                         // Unary functions
-                        "num?" => op!(|a| Exp::is_num(self.trans(a))),
-                        "sym?" => op!(|a| Exp::is_sym(self.trans(a))),
-                        "pair?" => op!(|a| Exp::is_pair(self.trans(a))),
-                        "car" => op!(|a| Exp::car(self.trans(a))),
-                        "cdr" => op!(|a| Exp::cdr(self.trans(a))),
-                        "cadr" => op!(|a| Exp::car(Exp::cdr(self.trans(a)))),
-                        "caddr" => op!(|a| Exp::car(Exp::cdr(Exp::cdr(self.trans(a))))),
-                        "cadddr" => op!(|a| Exp::car(Exp::cdr(Exp::cdr(Exp::cdr(self.trans(a)))))),
-                        "lift" => op!(|a| Exp::lift(self.trans(a))),
-                        "nolift" => op!(|a| self.trans(a)),
-                        "quote" => op!(|a| match a {
+                        "num?" => op!(|a| Exp::is_num(self.trans(&a))),
+                        "sym?" => op!(|a| Exp::is_sym(self.trans(&a))),
+                        "pair?" => op!(|a| Exp::is_pair(self.trans(&a))),
+                        "car" => op!(|a| Exp::car(self.trans(&a))),
+                        "cdr" => op!(|a| Exp::cdr(self.trans(&a))),
+                        "cadr" => op!(|a| Exp::car(Exp::cdr(self.trans(&a)))),
+                        "caddr" => op!(|a| Exp::car(Exp::cdr(Exp::cdr(self.trans(&a))))),
+                        "cadddr" => op!(|a| Exp::car(Exp::cdr(Exp::cdr(Exp::cdr(self.trans(&a)))))),
+                        "lift" => op!(|a| Exp::lift(self.trans(&a))),
+                        "nolift" => op!(|a| self.trans(&a)),
+                        "quote" => op!(|a| match &*a {
                             Val::Sym(a) => Exp::sym(a.clone()),
-                            _ => todo!(),
+                            _ => Exp::quote(a.clone()),
                         }),
-                        "trans" => op!(|_a| todo!()),
-                        "lift-rel" => op!(|_a| todo!()),
+                        "trans" => op!(|a| Exp::trans(a, self.env.clone())),
+                        "lift-rel" => op!(|a| Exp::lift_ref(a, self.env.clone())),
 
                         // Binary functions
-                        "+" => op!(|a, b| Exp::add(self.trans(a), self.trans(b))),
-                        "-" => op!(|a, b| Exp::sub(self.trans(a), self.trans(b))),
-                        "*" => op!(|a, b| Exp::mul(self.trans(a), self.trans(b))),
-                        "cons" => op!(|a, b| Exp::cons(self.trans(a), self.trans(b))),
-                        "eq?" => op!(|a, b| Exp::eq(self.trans(a), self.trans(b))),
-                        "run" => op!(|a, b| Exp::run(self.trans(a), self.trans(b))),
-                        "log" => op!(|a, b| Exp::log(self.trans(a), self.trans(b))),
+                        "+" => op!(|a, b| Exp::add(self.trans(&a), self.trans(&b))),
+                        "-" => op!(|a, b| Exp::sub(self.trans(&a), self.trans(&b))),
+                        "*" => op!(|a, b| Exp::mul(self.trans(&a), self.trans(&b))),
+                        "cons" => op!(|a, b| Exp::cons(self.trans(&a), self.trans(&b))),
+                        "eq?" => op!(|a, b| Exp::eq(self.trans(&a), self.trans(&b))),
+                        "run" => op!(|a, b| Exp::run(self.trans(&a), self.trans(&b))),
+                        "log" => op!(|a, b| Exp::log(self.trans(&a), self.trans(&b))),
 
                         // Ternary functions
-                        "let" => op!(|a, b, c| match a {
+                        "let" => op!(|a, b, c| match &*a {
                             Val::Sym(a) => {
-                                let b = self.trans(b);
+                                let b = self.trans(&b);
                                 self.env.push(a.clone());
-                                let c = self.trans(c);
+                                let c = self.trans(&c);
                                 self.env.pop();
                                 Exp::let_(b, c)
                             }
                             _ => panic!("let binding name must be a symbol"),
                         }),
-                        "lambda" => op!(|a, b, c| match (a, b) {
+                        "lambda" => op!(|a, b, c| match (&*a, &*b) {
                             (Val::Sym(a), Val::Sym(b)) => {
                                 self.env.push(a.clone());
                                 self.env.push(b.clone());
-                                let c = self.trans(c);
+                                let c = self.trans(&c);
                                 self.env.pop();
                                 self.env.pop();
                                 Exp::lam(c)
@@ -223,13 +223,13 @@ impl Translator {
                             _ => panic!("lambda self and parameter names must be symbols"),
                         }),
                         "if" => {
-                            op!(|a, b, c| Exp::if_(self.trans(a), self.trans(b), self.trans(c)))
+                            op!(|a, b, c| Exp::if_(self.trans(&a), self.trans(&b), self.trans(&c)))
                         }
 
                         _ => panic!("unrecognized function: {s}"),
                     },
 
-                    _ => op!(|a, b| Exp::app(self.trans(a), self.trans(b))),
+                    _ => op!(|a, b| Exp::app(self.trans(&a), self.trans(&b))),
                 }
             }
 

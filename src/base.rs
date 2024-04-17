@@ -5,6 +5,8 @@ use std::rc::Rc;
 
 use im_rc::Vector;
 
+use crate::lisp::trans;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Exp {
     Num(i64),
@@ -19,7 +21,15 @@ pub enum Exp {
     Cons(Rc<Exp>, Rc<Exp>),
     Lift(Rc<Exp>),
     Run(Rc<Exp>, Rc<Exp>),
+
+    // Additional variant not in the paper, which operates on `Exp`. Implemented
+    // in Scala as a regular variant.
     Log(Rc<Exp>, Rc<Exp>),
+    // Additional variants not in the paper, which operate on `Val`. Implemented
+    // in Scala with a lambda in `Special`.
+    Quote(Rc<Val>),
+    Trans(Rc<Val>, VarEnv),
+    LiftRef(Rc<Val>, VarEnv),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -112,8 +122,8 @@ impl Vm {
 
     /// A-normal form conversion. Useful for checking generated against expected
     /// code.
-    pub fn anf(&mut self, env: &Vector<Rc<Exp>>, e: &Exp) -> Rc<Exp> {
-        match e {
+    pub fn anf(&mut self, env: &Vector<Rc<Exp>>, e: &Rc<Exp>) -> Rc<Exp> {
+        match &**e {
             Exp::Num(n) => Exp::num(*n),
             Exp::Sym(s) => Exp::sym(s.clone()),
             Exp::Var(x) => env[*x].clone(),
@@ -170,6 +180,7 @@ impl Vm {
                 let e = self.reify(|vm| vm.anf(env, e));
                 self.reflect(Exp::log(b.clone(), e))
             }
+            Exp::Quote(_) | Exp::Trans(_, _) | Exp::LiftRef(_, _) => self.reflect(e.clone()),
         }
     }
 
@@ -331,6 +342,16 @@ impl Vm {
                 let v2 = self.evalms(env, e2);
                 Val::pair(v1, v2)
             }
+
+            Exp::Quote(v) => v.clone(),
+            Exp::Trans(v, venv) => {
+                let v = self.evalms(env, &trans(v, venv.clone()));
+                Val::code(trans(&v, venv.clone()))
+            }
+            Exp::LiftRef(v, venv) => {
+                let v = self.evalms(env, &trans(v, venv.clone()));
+                Val::code(Exp::quote(v))
+            }
         }
     }
 }
@@ -377,6 +398,15 @@ impl Exp {
     }
     pub fn log(b: Rc<Exp>, e: Rc<Exp>) -> Rc<Self> {
         Rc::new(Exp::Log(b, e))
+    }
+    pub fn quote(v: Rc<Val>) -> Rc<Self> {
+        Rc::new(Exp::Quote(v))
+    }
+    pub fn trans(v: Rc<Val>, venv: VarEnv) -> Rc<Self> {
+        Rc::new(Exp::Trans(v, venv))
+    }
+    pub fn lift_ref(v: Rc<Val>, venv: VarEnv) -> Rc<Self> {
+        Rc::new(Exp::LiftRef(v, venv))
     }
 
     pub fn car(e: Rc<Exp>) -> Rc<Self> {
@@ -443,6 +473,9 @@ impl Exp {
             Exp::If(c, a, b) => {
                 format!("(if {} {} {})", c.pretty(env), a.pretty(env), b.pretty(env))
             }
+            Exp::Quote(v) => format!("'{}", v.pretty(env)),
+            Exp::Trans(v, venv) => format!("(trans {} {})", v.pretty(env), venv.pretty()),
+            Exp::LiftRef(v, venv) => format!("(lift-ref {} {})", v.pretty(env), venv.pretty()),
         }
     }
 }
