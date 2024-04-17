@@ -553,9 +553,25 @@ impl Env {
     }
 }
 
+impl FromIterator<Rc<Val>> for Env {
+    fn from_iter<I: IntoIterator<Item = Rc<Val>>>(iter: I) -> Self {
+        let mut env = Env::new();
+        for v in iter {
+            env.push(v);
+        }
+        env
+    }
+}
+
 impl VarEnv {
     pub fn new() -> Self {
-        VarEnv { env: Vec::new() }
+        VarEnv::with_capacity(0)
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
+        VarEnv {
+            env: Vec::with_capacity(capacity),
+        }
     }
 
     pub fn get(&self, x: &str) -> Option<usize> {
@@ -588,6 +604,17 @@ impl VarEnv {
         }
         s.push(')');
         s
+    }
+}
+
+impl<T: Into<String>> FromIterator<T> for VarEnv {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let mut env = VarEnv::with_capacity(iter.size_hint().0);
+        for v in iter {
+            env.push(v.into());
+        }
+        env
     }
 }
 

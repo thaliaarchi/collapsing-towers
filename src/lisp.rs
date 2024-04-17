@@ -429,11 +429,10 @@ mod tests {
             (let code (lambda _ _ (lift (lambda f x x)))
               (run 0 (code 'dummy)))
             ",
-            {
-                let mut env = Env::new();
-                env.push(Val::clo(Env::new(), Exp::lift(Exp::lam(Exp::var(3)))));
-                Val::clo(env, Exp::var(2))
-            },
+            Val::clo(
+                Env::from_iter([Val::clo(Env::new(), Exp::lift(Exp::lam(Exp::var(3))))]),
+                Exp::var(2),
+            ),
         );
 
         // Disregarding the embedded closure environment that includes the value
