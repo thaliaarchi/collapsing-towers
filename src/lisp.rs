@@ -320,6 +320,219 @@ mod tests {
         assert_eq!(translated, translated1)
     }
 
+    fn check_run(prog: &str, expected: Rc<Val>) {
+        assert_eq!(ev(prog), expected);
+    }
+
+    fn check_code(prog: &str, expected: &str) {
+        assert_eq!(ev(prog).unwrap_code().pretty(&Vec::new()), expected);
+    }
+
+    /// Tutorial from popl18/lisp.scala.
     #[test]
-    fn example1() {}
+    fn tutorial() {
+        // Some aspects of our multi-stage language may appear a bit
+        // counterintuitive, but are essential for understanding how things work
+        // -- especially how `lift` and `run` interact.
+
+        // Broadly we can do two things very easily:
+        // - Return code from the main program: `(lift ...)`
+        // - Build code and run it: `(run 0 (.. (lift ..) ..))`
+
+        // The key thing to avoid is calling `run` on code that is generated
+        // outside of the `run` statement.
+
+        // Below are some concrete examples.
+
+        // (1)
+
+        // Below, operator `lift` will `reflect` its argument, i.e., create a
+        // new binding `Var(0) = Lam(Var(1))` in the current scope of
+        // expressions being generated. The present-stage variable `code` will
+        // be bound to expression `Code(Var(0))`. Whole-program evaluation
+        // assembles all generated bindings into a nested let:
+        check_run(
+            "
+            (let code (lift (lambda f x x))
+              code)
+            ",
+            Val::code(Exp::let_(Exp::lam(Exp::var(1)), Exp::var(0))),
+        );
+
+        // Pretty-printing hides the let if the expression is of the form
+        // `(let x e x)`.
+        check_code(
+            "
+            (let code (lift (lambda f x x))
+              code)
+            ",
+            "(lambda f0 x1 x1)",
+        );
+
+        // So the result of evaluating the whole expression is a block of code.
+        // We can't ignore code that is reflected. For example,
+        // `(let code (lift ..) 3)` would throw an exception.
+
+        // (2)
+
+        // Things may get surprising if we try to generate and run code at the
+        // same time -- in general, one needs to avoid running code that is
+        // generated outside of the `run` statement.
+
+        // Intuitively we might expect the following code to return a plain
+        // closure (create a lifted closure, then eval it to a value).
+
+        check_run(
+            "
+            (let code (lift (lambda f x x))
+              (run 0 code))
+            ",
+            Val::code(Exp::let_(Exp::lam(Exp::var(1)), Exp::var(0))),
+        );
+
+        // However, that's not what happens. Again, variable `code` is bound to
+        // `Code(Var(0))`, the symbol generated from reflecting the
+        // `(lift (lambda ...))`. So `run` is called with `Code(Var(0))`, i.e.,
+        // `Var(0)` is the expression being evaluated, and that happens to be
+        // exactly variable `code`, which is again mapped to `Code(Var(0))`.
+        // Hence, the same result as in (1).
+
+        // Let's test our understanding further:
+
+        check_run(
+            "
+            (let z (lift 42)
+              (let code (lift (lambda f x x))
+                (run 0 code)))
+            ",
+            Val::code(Exp::let_(Exp::lam(Exp::var(1)), Exp::num(42))),
+        );
+
+        // Yes, this one returns 42, wrapped in a let that declares the lambda.
+
+        // (Again, we have to use lift 42 instead of just 42, since we have to
+        // return a code value.)
+
+        // Future versions may entirely prohibit such uses, at the expense of
+        // additional checks that associate a particular run-scope (or the top
+        // level) with each Code value, and prevent mixing of levels.
+
+        // (3)
+
+        // Now how do we actually achieve the desired behavior: declare a
+        // (closed) piece of code, then evaluate it?
+
+        // Simple, we just wrap it in a function:
+
+        check_run(
+            "
+            (let code (lambda _ _ (lift (lambda f x x)))
+              (run 0 (code 'dummy)))
+            ",
+            {
+                let mut env = Env::new();
+                env.push(Val::clo(Env::new(), Exp::lift(Exp::lam(Exp::var(3)))));
+                Val::clo(env, Exp::var(2))
+            },
+        );
+
+        // Disregarding the embedded closure environment that includes the value
+        // of `code`, the result can be read more conveniently as
+        // `Clo(code/Var0=..., (lambda f/Var1 x/Var2. x/Var))`.
+
+        // The key is to ensure that all code pieces are reflected within the
+        // **dynamic** scope of evaluating `run`'s argument, including functions
+        // called within that dynamic extent.
+
+        // (4)
+
+        // What if we want to run the same code multiple times instead
+        // re-generating it? Simple, generate a function and call it multiple
+        // times.
+
+        // (simple exercise -- note that we're already generating functions)
+
+        // (5)
+
+        // Note that generated code can refer to present-stage variables, using
+        // `quote` and `trans`.
+
+        // This has a similar effect to standard quotation, and comes with
+        // similar hygiene issues (some are aggravated by our use of De Bruijn
+        // levels for variable names).
+
+        check_run(
+            "
+            (let z 21
+              (let code (trans '(+ z z))
+                (run 0 code)))
+            ",
+            Val::num(42),
+        );
+
+        // In contrast to `lift`, `trans` creates a closed code value directly.
+
+        // Observe how the piece of code refers to variable `z = Var(0)`
+        // directly:
+
+        check_run(
+            "
+            (let z 21
+              (let code (trans '(+ z z))
+                code))
+            ",
+            Val::code(Exp::add(Exp::var(0), Exp::var(0))),
+        );
+
+        // Now let's take a look at the interaction with bindings inside a
+        // `trans` block:
+
+        check_run(
+            "
+            (let z 21
+              (let code (trans '(lambda _ x (+ z x)))
+                code))
+            ",
+            Val::code(Exp::lam(Exp::add(Exp::var(0), Exp::var(2)))),
+        );
+
+        // When we try to run this code, there's again a problem:
+
+        check_run(
+            "
+            (let z 20
+              (let code (trans '(lambda _ x (+ z x)))
+                (let var2 10
+                  (let f (run 0 code)
+                    (f 22)))))
+            ",
+            Val::num(30),
+        );
+
+        // Intuitively we'd expect to get result 42, but we obtain 30. This
+        // happens because `x` inside the `trans`ed lambda is `Var(2)` at this
+        // position, but when `run` is called, `Var(2)` actually corresponds to
+        // `var2`.
+
+        // A more elaborate representation of bound and free names would fix
+        // this (e.g., locally nameless) at the expense of complexity and
+        // runtime overhead. Other hygiene issues (e.g., variables going out of
+        // scope) would remain.
+
+        // Right now, the recommendation is to use `trans` only as a direct
+        // argument to `run`:
+
+        check_run(
+            "
+            (let z 20
+              (let var2 10
+                (let f (run 0 (trans '(lambda _ x (+ z x))))
+                  (f 22))))
+            ",
+            Val::num(42),
+        );
+
+        // This is good enough for the key use case of `trans` in `EM` (see
+        // popl18/pink.scala).
+    }
 }

@@ -501,7 +501,7 @@ impl Val {
         Val::num(if b { 1 } else { 0 })
     }
 
-    fn unwrap_code(&self) -> Rc<Exp> {
+    pub fn unwrap_code(&self) -> Rc<Exp> {
         if let Val::Code(e) = self {
             e.clone()
         } else {
