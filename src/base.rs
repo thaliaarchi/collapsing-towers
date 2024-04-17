@@ -443,7 +443,7 @@ impl Exp {
             Exp::Sym(s) => format!("'{s}"),
             Exp::Var(x) => match env.get(*x) {
                 Some(s) => s.clone(),
-                None => "?".to_owned(),
+                None => format!("?{x}"),
             },
             Exp::Op1(op, a) => format!("({op} {})", a.pretty(env)),
             Exp::Op2(op, a, b) => format!("({op} {} {})", a.pretty(env), b.pretty(env)),
