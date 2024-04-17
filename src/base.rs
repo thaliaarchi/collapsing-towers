@@ -191,7 +191,7 @@ impl Vm {
         Val::code(self.reflect(s))
     }
 
-    fn reifyv(&mut self, f: impl FnOnce(&mut Vm) -> Rc<Val>) -> Rc<Val> {
+    pub fn reifyv(&mut self, f: impl FnOnce(&mut Vm) -> Rc<Val>) -> Rc<Val> {
         self.run(|vm| {
             vm.block = Vec::new();
             let res = f(vm);

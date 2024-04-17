@@ -34,7 +34,7 @@ use winnow::{
     token::take_while,
 };
 
-use crate::base::{Exp, Val, VarEnv};
+use crate::base::{Env, Exp, Val, VarEnv, Vm};
 
 // TODO: Questions
 // - Why do the authors parse to Val then translate it to Exp, rather than
@@ -114,6 +114,14 @@ pub fn trans(v: &Val, env: VarEnv) -> Rc<Exp> {
     .trans(v)
 }
 
+pub fn ev(src: &str) -> Rc<Val> {
+    // TODO: Handle errors.
+    let prog_val = parse(src).unwrap();
+    let prog_exp = trans(&prog_val, VarEnv::new());
+    let mut vm = Vm::new();
+    vm.reifyv(|vm| vm.evalms(&Env::new(), &prog_exp))
+}
+
 impl Val {
     pub fn unfold_list(&self, list: &mut Vec<Rc<Val>>) {
         let mut v = self;
@@ -156,9 +164,9 @@ impl Translator {
             }
         });
         macro_rules! op(
-            (|$a:ident| $e:expr) => { unpack_list!(1, |$a| $e) };
-            (|$a:ident, $b:ident| $e:expr) => { unpack_list!(2, |$a, $b| $e) };
-            (|$a:ident, $b:ident, $c:ident| $e:expr) => { unpack_list!(3, |$a, $b, $c| $e) };
+            (|$a:ident| $e:expr) => { unpack_list!(2, |_f, $a| $e) };
+            (|$a:ident, $b:ident| $e:expr) => { unpack_list!(3, |_f, $a, $b| $e) };
+            (|$a:ident, $b:ident, $c:ident| $e:expr) => { unpack_list!(4, |_f, $a, $b, $c| $e) };
         );
 
         match v {
@@ -229,7 +237,7 @@ impl Translator {
                         _ => panic!("unrecognized function: {s}"),
                     },
 
-                    _ => op!(|a, b| Exp::app(self.trans(&a), self.trans(&b))),
+                    _ => unpack_list!(2, |a, b| Exp::app(self.trans(&a), self.trans(&b))),
                 }
             }
 
@@ -244,7 +252,7 @@ mod tests {
 
     #[test]
     fn parse_example() {
-        let code = "
+        let prog = "
             (let code (trans '(lambda _ x (+ x 42)))
               ; hello
               (cons code ()))
@@ -295,6 +303,23 @@ mod tests {
                 ),
             ),
         );
-        assert_eq!(parse(code), Ok(parsed));
+        assert_eq!(parse(prog), Ok(parsed));
     }
+
+    #[test]
+    fn trans_example() {
+        let prog = "
+            (let code (lift (lambda f x (+ x 42)))
+              code)
+        ";
+        let translated1 = Exp::let_(
+            Exp::lift(Exp::lam(Exp::add(Exp::var(1), Exp::num(42)))),
+            Exp::var(0),
+        );
+        let translated = trans(&parse(prog).unwrap(), VarEnv::new());
+        assert_eq!(translated, translated1)
+    }
+
+    #[test]
+    fn example1() {}
 }
